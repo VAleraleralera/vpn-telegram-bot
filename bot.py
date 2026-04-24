@@ -27,71 +27,70 @@ def start(message):
         "✅ *Никаких логов*\n"
         "✅ *Безлимит по трафику*\n"
         "✅ *Обход блокировок*\n\n"
-        "👇 *Нажми на кнопку ниже, чтобы узнать цену*"
+        "👇 *Нажми на кнопку ниже*"
     )
     bot.send_message(message.chat.id, text, parse_mode="MarkdownV2", reply_markup=main_keyboard())
 
-# Кнопка "💰 Цена"
-@bot.message_handler(func=lambda message: message.text == "💰 Цена")
-def price(message):
-    text = (
-        "💎 *Тарифы:*\n\n"
-        "📱 *1 месяц* — 150 руб\n"
-        "🎮 *3 месяца* — 400 руб\n"
-        "⭐️ *6 месяцев* — 700 руб\n"
-        "🔥 *1 год* — 1200 руб\n\n"
-        "💰 *Оплата:* карта, криптовалюта, Telegram Stars\n\n"
-        "🔑 Напиши /buy или нажми кнопку «Купить VPN»"
-    )
-    bot.send_message(message.chat.id, text, parse_mode="MarkdownV2")
+# Обработка ЛЮБОГО текста (включая кнопки)
+@bot.message_handler(func=lambda message: True)
+def handle_all(message):
+    text = message.text
+    
+    if "Цена" in text:
+        answer = (
+            "💎 *Тарифы:*\n\n"
+            "📱 *1 месяц* — 150 руб\n"
+            "🎮 *3 месяца* — 400 руб\n"
+            "⭐️ *6 месяцев* — 700 руб\n"
+            "🔥 *1 год* — 1200 руб\n\n"
+            "💰 *Оплата:* карта, криптовалюта, Telegram Stars"
+        )
+        bot.send_message(message.chat.id, answer, parse_mode="MarkdownV2")
+    
+    elif "Купить" in text:
+        vpn_key = "vless://example@example.com:443?security=reality"
+        answer = (
+            "🔑 *Ваш VPN ключ:*\n\n"
+            f"`{vpn_key}`\n\n"
+            "📱 *Как подключиться:*\n"
+            "• Android: v2rayNG\n"
+            "• Windows: v2rayN\n"
+            "• iOS: Shadowrocket"
+        )
+        bot.send_message(message.chat.id, answer, parse_mode="MarkdownV2")
+    
+    elif "Помощь" in text or text == "/help":
+        answer = (
+            "🆘 *Помощь:*\n\n"
+            "• `/start` — Главное меню\n"
+            "• `/price` — Цены\n"
+            "• `/buy` — Получить ключ\n\n"
+            "⚡️ Если ключ не работает — напишите в поддержку"
+        )
+        bot.send_message(message.chat.id, answer, parse_mode="MarkdownV2")
+    
+    elif "Канал" in text:
+        answer = "📢 Наш канал: https://t.me/твой_канал"
+        bot.send_message(message.chat.id, answer)
+    
+    else:
+        # Если ничего не подошло — показываем меню
+        bot.send_message(message.chat.id, "Используй кнопки ниже 👇", reply_markup=main_keyboard())
 
-# Кнопка "🔑 Купить VPN"
-@bot.message_handler(func=lambda message: message.text == "🔑 Купить VPN")
-def buy(message):
-    # ВРЕМЕННЫЙ КЛЮЧ — заменишь на настоящий позже
-    vpn_key = "vless://example@example.com:443?security=reality"
-    text = (
-        "🔑 *Ваш VPN ключ:*\n\n"
-        f"`{vpn_key}`\n\n"
-        "📱 *Как подключиться:*\n"
-        "• Android: скачать v2rayNG\n"
-        "• Windows: скачать v2rayN\n"
-        "• iOS: Shadowrocket (App Store)\n\n"
-        "ℹ️ Если ключ не работает — напиши /help"
-    )
-    bot.send_message(message.chat.id, text, parse_mode="MarkdownV2")
-
-# Кнопка "❓ Помощь" и команда /help
-@bot.message_handler(func=lambda message: message.text == "❓ Помощь")
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    text = (
-        "🆘 *Помощь:*\n\n"
-        "• `/start` — Главное меню\n"
-        "• `/price` — Цены\n"
-        "• `/buy` — Получить ключ\n"
-        "• `/help` — Это сообщение\n\n"
-        "⚡️ Если ключ не работает — напишите в поддержку (ссылка появится позже)"
-    )
-    bot.send_message(message.chat.id, text, parse_mode="MarkdownV2")
-
-# Кнопка "📢 Наш канал"
-@bot.message_handler(func=lambda message: message.text == "📢 Наш канал")
-def channel(message):
-    text = "📢 Подписывайся на наш канал: https://t.me/твой_канал"
-    bot.send_message(message.chat.id, text)
-
-# Команда /price
+# Команды /price, /buy, /help
 @bot.message_handler(commands=['price'])
 def price_cmd(message):
-    price(message)
+    handle_all(message)
 
-# Команда /buy
 @bot.message_handler(commands=['buy'])
 def buy_cmd(message):
-    buy(message)
+    handle_all(message)
 
-# Простой HTTP-сервер для Render
+@bot.message_handler(commands=['help'])
+def help_cmd(message):
+    handle_all(message)
+
+# HTTP-сервер для Render
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -103,9 +102,7 @@ def run_http_server():
     server = HTTPServer(('0.0.0.0', port), Handler)
     server.serve_forever()
 
-# Запускаем HTTP-сервер в отдельном потоке
 Thread(target=run_http_server, daemon=True).start()
 
-# Запускаем бота
 print("✅ Бот запущен и работает...")
 bot.infinity_polling()
