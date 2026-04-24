@@ -19,50 +19,32 @@ def main_keyboard():
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(
-        message.chat.id,
-        "🤖 Добро пожаловать в VPN Shop!\n\nВыбери действие:",
-        reply_markup=main_keyboard()
-    )
+    bot.send_message(message.chat.id, "🤖 Добро пожаловать!", reply_markup=main_keyboard())
 
-# Обработка ТОЧНОГО совпадения текста кнопки
-@bot.message_handler(func=lambda message: message.text == "💰 Цена")
-def price(message):
-    bot.send_message(
-        message.chat.id,
-        "💰 Тарифы:\n1 месяц — 150 руб\n3 месяца — 400 руб\n6 месяцев — 700 руб\n1 год — 1200 руб"
-    )
+# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК (работает на телефоне и компе)
+@bot.message_handler(func=lambda message: True)
+def handle_all(message):
+    text = message.text
+    
+    if "Цена" in text or text == "💰 Цена":
+        bot.send_message(message.chat.id, "💰 150 руб/месяц")
+    
+    elif "Купить" in text or text == "🔑 Купить VPN":
+        bot.send_message(message.chat.id, "🔑 vless://example...")
+    
+    elif "Помощь" in text or text == "❓ Помощь":
+        bot.send_message(message.chat.id, "🆘 /start - меню")
+    
+    elif "Канал" in text or text == "📢 Наш канал":
+        bot.send_message(message.chat.id, "📢 https://t.me/твой_канал")
+    
+    else:
+        bot.send_message(message.chat.id, "Используй кнопки 👇", reply_markup=main_keyboard())
 
-@bot.message_handler(func=lambda message: message.text == "🔑 Купить VPN")
-def buy(message):
-    vpn_key = "vless://example@example.com:443?security=reality"
-    bot.send_message(
-        message.chat.id,
-        f"🔑 Твой ключ:\n{vpn_key}\n\nСкачай v2rayNG (Android) или v2rayN (Windows)"
-    )
-
-@bot.message_handler(func=lambda message: message.text == "❓ Помощь")
-def help_command(message):
-    bot.send_message(
-        message.chat.id,
-        "🆘 Помощь:\n/start — главное меню\n/price — цены\n/buy — получить ключ"
-    )
-
-@bot.message_handler(func=lambda message: message.text == "📢 Наш канал")
-def channel(message):
-    bot.send_message(message.chat.id, "Канал: https://t.me/твой_канал")
-
-@bot.message_handler(commands=['price'])
-def price_cmd(message):
-    price(message)
-
-@bot.message_handler(commands=['buy'])
-def buy_cmd(message):
-    buy(message)
-
-@bot.message_handler(commands=['help'])
-def help_cmd(message):
-    help_command(message)
+# Обработка команд
+@bot.message_handler(commands=['price', 'buy', 'help'])
+def commands(message):
+    handle_all(message)
 
 # HTTP-сервер для Render
 class Handler(BaseHTTPRequestHandler):
@@ -78,5 +60,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен...")
+print("✅ Бот запущен")
 bot.infinity_polling()
