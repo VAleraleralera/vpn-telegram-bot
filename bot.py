@@ -10,41 +10,73 @@ bot = telebot.TeleBot(TOKEN)
 def main_keyboard():
     keyboard = ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     keyboard.add(
-        KeyboardButton("💰 Цена"),
-        KeyboardButton("🔑 Купить VPN"),
-        KeyboardButton("❓ Помощь"),
-        KeyboardButton("📢 Наш канал")
+        KeyboardButton(" Тарифы"),
+        KeyboardButton(" Купить"),
+        KeyboardButton(" Поддержка"),
+        KeyboardButton(" Канал")
     )
     return keyboard
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    bot.send_message(message.chat.id, "🤖 Добро пожаловать!", reply_markup=main_keyboard())
+    text = (
+        "VPN Shop. Работаем через обход блокировок.\n\n"
+        "Ключи под Reality. Логи не храним. Оплата — карта, крипта, Stars.\n\n"
+        "Выберите действие в меню ниже."
+    )
+    bot.send_message(message.chat.id, text, reply_markup=main_keyboard())
 
-# УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК (работает на телефоне и компе)
-@bot.message_handler(func=lambda message: True)
-def handle_all(message):
-    text = message.text
-    
-    if "Цена" in text or text == "💰 Цена":
-        bot.send_message(message.chat.id, "💰 150 руб/месяц")
-    
-    elif "Купить" in text or text == "🔑 Купить VPN":
-        bot.send_message(message.chat.id, "🔑 vless://example...")
-    
-    elif "Помощь" in text or text == "❓ Помощь":
-        bot.send_message(message.chat.id, "🆘 /start - меню")
-    
-    elif "Канал" in text or text == "📢 Наш канал":
-        bot.send_message(message.chat.id, "📢 https://t.me/твой_канал")
-    
-    else:
-        bot.send_message(message.chat.id, "Используй кнопки 👇", reply_markup=main_keyboard())
+@bot.message_handler(func=lambda message: "Тариф" in message.text or message.text == "💰 Тарифы")
+def price(message):
+    text = (
+        "Тарифы:\n\n"
+        "1 месяц — 350 ₽\n"
+        "3 месяца — 900 ₽\n"
+        "6 месяцев — 1500 ₽\n"
+        "12 месяцев — 2500 ₽\n\n"
+        "Оплата любым способом. Выдаём ключ в течение 5 минут.\n\n"
+        "Чтобы купить — нажмите «Купить»."
+    )
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(func=lambda message: "Купить" in message.text or message.text == "🔑 Купить")
+def buy(message):
+    text = (
+        "Сейчас подключение выдаётся вручную.\n\n"
+        "Оплату отправляйте сюда:\n"
+        "👉 89091110340 сбер бля\n\n"
+        "После оплаты скиньте чек сюда — получите ключ.\n\n"
+        "Подключение: V2Ray / Nekoray / Hiddify."
+    )
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(func=lambda message: "Поддерж" in message.text or message.text == "❓ Поддержка")
+def support(message):
+    text = (
+        "Если ключ не работает — перевыпустим в течение часа.\n\n"
+        "Среднее время ответа: 15 минут (днём).\n\n"
+        "По техническим вопросам сюда:\n"
+        "👉 @@dnvzzz"
+    )
+    bot.send_message(message.chat.id, text)
+
+@bot.message_handler(func=lambda message: "Канал" in message.text or message.text == "📢 Канал")
+def channel(message):
+    text = "📢 Наш канал: https://t.me/нету пока канала"
+    bot.send_message(message.chat.id, text)
 
 # Обработка команд
-@bot.message_handler(commands=['price', 'buy', 'help'])
-def commands(message):
-    handle_all(message)
+@bot.message_handler(commands=['price'])
+def price_cmd(message):
+    price(message)
+
+@bot.message_handler(commands=['buy'])
+def buy_cmd(message):
+    buy(message)
+
+@bot.message_handler(commands=['help'])
+def help_cmd(message):
+    support(message)
 
 # HTTP-сервер для Render
 class Handler(BaseHTTPRequestHandler):
@@ -60,5 +92,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен")
+print("✅ VPN Shop Bot запущен")
 bot.infinity_polling()
