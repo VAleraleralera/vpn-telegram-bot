@@ -64,7 +64,7 @@ def callback_handler(call):
     message_id = call.message.message_id
 
     # Главное меню
-    if call.data == "main_menu":
+    if call.data == "back_main":
         bot.edit_message_text(
             "🔹 *VPN Shop* 🔹\n\nРаботаем через обход блокировок.\nКлючи под Reality. Логи не храним.\n\nВыберите действие:",
             chat_id,
@@ -93,45 +93,40 @@ def callback_handler(call):
 
     elif call.data == "support":
         text = (
-            " *Поддержка*\n\n"
+            "🆘 *Поддержка*\n\n"
             "Если ключ не работает — перевыпустим в течение часа.\n"
             "Среднее время ответа: 15 минут.\n\n"
-            "По вопросам: @твой_ник"
+            "По вопросам: @??who_u_foolin??"
         )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_main"))
         bot.edit_message_text(
             text,
             chat_id,
             message_id,
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="main_menu"))
+            reply_markup=keyboard
         )
 
     elif call.data == "channel":
-        text = " Наш канал: https://t.me/dnvzzz"
+        text = "📢 Наш канал: https://t.me/твой_канал"
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_main"))
         bot.edit_message_text(
             text,
             chat_id,
             message_id,
-            reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="main_menu"))
+            reply_markup=keyboard
         )
 
     # Назад к тарифам
     elif call.data == "back_tariffs":
         bot.edit_message_text(
-            " *Выберите срок подписки:*",
+            "📅 *Выберите срок подписки:*",
             chat_id,
             message_id,
             parse_mode="Markdown",
             reply_markup=tariff_menu()
-        )
-
-    elif call.data == "back_main":
-        bot.edit_message_text(
-            "🔹 *VPN Shop* 🔹\n\nРаботаем через обход блокировок.\nКлючи под Reality. Логи не храним.\n\nВыберите действие:",
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=main_menu()
         )
 
     # --- Выбор тарифа ---
@@ -151,7 +146,7 @@ def callback_handler(call):
             reply_markup=payment_menu(tariff, price)
         )
 
-    # --- Оплата ---
+    # --- Оплата картой ---
     elif call.data.startswith("card_"):
         parts = call.data.split("_")
         tariff = parts[1]
@@ -161,17 +156,20 @@ def callback_handler(call):
             f"Тариф: {tariff} — {price} ₽\n\n"
             f"Реквизиты для перевода:\n"
             f"• Карта: 1234 5678 9012 3456\n"
-            f"• Получатель: Иван Иванов\n\n"
+            f"• Получатель: Примерский Пример Примерович\n\n"
             f"После оплаты пришлите чек сюда, и мы выдадим ключ в течение 5 минут."
         )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("◀️ К тарифам", callback_data="back_tariffs"))
         bot.edit_message_text(
             text,
             chat_id,
             message_id,
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ К тарифам", callback_data="back_tariffs"))
+            reply_markup=keyboard
         )
 
+    # --- Оплата Stars ---
     elif call.data.startswith("stars_"):
         parts = call.data.split("_")
         tariff = parts[1]
@@ -180,15 +178,17 @@ def callback_handler(call):
             f"⭐ *Оплата Telegram Stars*\n\n"
             f"Тариф: {tariff} — {price} ₽\n\n"
             f"Для оплаты перейдите по платёжной ссылке:\n"
-            f"👉 [Оплатить Stars](https://t.me/здесь_твоя_ссылка)\n\n"
+            f"👉 [Оплатить Stars](https://t.me/ссылка)\n\n"
             f"После оплаты ключ придёт автоматически."
         )
+        keyboard = InlineKeyboardMarkup()
+        keyboard.add(InlineKeyboardButton("◀️ К тарифам", callback_data="back_tariffs"))
         bot.edit_message_text(
             text,
             chat_id,
             message_id,
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ К тарифам", callback_data="back_tariffs"))
+            reply_markup=keyboard
         )
 
     # Обязательный ответ на callback (чтобы убрать часики)
