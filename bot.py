@@ -3,6 +3,7 @@ import telebot
 import requests
 import json
 import time
+import uuid
 from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
@@ -34,17 +35,21 @@ def get_inbound_id():
 def create_vpn_key(days):
     inbound_id = get_inbound_id()
     if not inbound_id:
-        return "❌ Нет VLESS подключения. Создайте его в панели (Inbounds → Add Inbound → VLESS)."
+        return "❌ VLESS inbound не найден. Создайте его в панели."
+    
     session = requests.Session()
     session.verify = False
     session.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
+    
     expiry_time = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
+    client_id = str(uuid.uuid4())
     email = f"user_{int(time.time())}"
+    
     payload = {
         "id": inbound_id,
         "settings": json.dumps({
             "clients": [{
-                "id": "",
+                "id": client_id,
                 "email": email,
                 "expiryTime": expiry_time,
                 "totalGB": 0,
@@ -52,10 +57,15 @@ def create_vpn_key(days):
             }]
         })
     }
+    
     resp = session.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload)
-    if resp.status_code == 200 and resp.json().get("success"):
-        return resp.json().get("obj", {}).get("url")
-    return f"❌ Ошибка: {resp.status_code} {resp.text[:200]}"
+    if resp.status_code == 200:
+        result = resp.json()
+        if result.get("success"):
+            return result.get("obj", {}).get("url")
+        else:
+            return f"❌ Ошибка API: {result.get('msg')}"
+    return f"❌ Ошибка HTTP: {resp.status_code}"
 
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
@@ -81,6 +91,7 @@ def callback(call):
     else:
         bot.edit_message_text(f"❌ {key}", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
+# ========== HTTP-сервер для Render ==========
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -96,5 +107,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. Автовыдача ключей активна.")
+print("✅ Бот запущен. Автовыдача активна")
 bot.infinity_polling()
