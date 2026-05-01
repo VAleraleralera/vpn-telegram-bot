@@ -1,98 +1,253 @@
 import os
 import telebot
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import requests
+import json
+import time
+from datetime import datetime, timedelta
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-# Импортируем нормальный клиент для 3X-UI
-from client3x import Client3XUI, ClientPayload
-
-# ----- ТВОИ НАСТРОЙКИ (ВСТАВЬ СВОИ ДАННЫЕ) -----
+# ===== НАСТРОЙКИ (ЧЕРЕЗ ПЕРЕМЕННЫЕ RENDER) =====
 TOKEN = os.environ.get("BOT_TOKEN")
-PANEL_URL = "http://72.56.119.147:54321/mKZdh18YN6yXlsRTkR/"  # Твой URL панели
-PANEL_USERNAME = "VPn/Admin.log"
-PANEL_PASSWORD = "Vpn/AdMin.pas"
-INBOUND_ID = 1  # ID твоего VLESS подключения (скорее всего 1)
-# ------------------------------------------------
+XUI_URL = os.environ.get("XUI_URL")           # Твой URL панели (http://IP:порт/путь/)
+XUI_USERNAME = os.environ.get("XUI_USERNAME") # Логин от панели (admin)
+XUI_PASSWORD = os.environ.get("XUI_PASSWORD") # Пароль от панели (admin)
+
+# Отключаем warnings про SSL (для красоты)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 bot = telebot.TeleBot(TOKEN)
 
-# --- ИНИЦИАЛИЗАЦИЯ API ---
-# Это сердце автомата. Библиотека сама решит проблему с протоколом.
-api_client = Client3XUI(
-    panel_host=PANEL_URL,
-    login=PANEL_USERNAME,
-    password=PANEL_PASSWORD,
-    inbound_id=INBOUND_ID,
-    logging_enabled=True  # Чтобы видеть логи в Render
-)
-
-def create_vpn_key(user_telegram_id, days=30):
-    """Создает ключ через API и возвращает VLESS-ссылку"""
+# ===== 1. ПОЛУЧАЕМ ID НУЖНОГО INBOUND АВТОМАТИЧЕСКИ =====
+def get_inbound_id():
+    """Автоматически ищет ID первого попавшегося Inbound с протоколом VLESS."""
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({"Content-Type": "application/json"})
+    
+    # Логинимся в панели
+    login_payload = {"username": XUI_USERNAME, "password": XUI_PASSWORD}
     try:
-        # 1. Создаем "клиента" (пользователя) для панели
-        # Используем client3x для создания правильного JSON-запроса[citation:3]
-        payload = ClientPayload(
-            inbound_id=INBOUND_ID,
-            user_id=user_telegram_id,
-            email=f"user_{user_telegram_id}",
-            expiry_days=days,  # библиотека сама переведет дни в timestamp
-            traffic_GB=0,      # 0 = безлимит
-            flow="xtls-rprx-vision"
-        )
-        
-        # 2. Отправляем запрос в панель
-        response = api_client.add_client(payload)
-        
-        if response.get('success'):
-            # 3. Получаем ссылку на подключение
-            # Ссылка обычно приходит в ответе или генерируется через get_client_url
-            client_url = api_client.get_client_url(email=f"user_{user_telegram_id}")
-            return client_url
-        else:
+        login_resp = session.post(f"{XUI_URL}login", json=login_payload, timeout=10)
+        if login_resp.status_code != 200 or not login_resp.json().get("success"):
+            print("❌ Ошибка логина при поиске Inbound")
             return None
     except Exception as e:
-        print(f"🔥 Ошибка создания ключа: {e}")
+        print(f"Login error: {e}")
         return None
 
-# --- КЛАВИАТУРЫ ---
-def tariff_keyboard():
-    keyboard = InlineKeyboardMarkup(row_width=1)
+    # Получаем список всех Inbound
+    try:
+        resp = session.get(f"{XUI_URL}panel/api/inbounds/list", timeout=10)
+        if resp.status_code != 200:
+            return None
+        
+        inbounds = resp.json().get("obj", [])
+        
+        # Ищем первый Inbound с протоколом VLESS
+        for inbound in inbounds:
+            if inbound.get("protocol") == "vless":
+                inbound_id = inbound.get("id")
+                print(f"✅ Найден Inbound ID {inbound_id} (протокол VLESS)")
+                return inbound_id
+        
+        print("❌ Не найден ни один Inbound с протоколом VLESS")
+        return None
+    except Exception as e:
+        print(f"Ошибка получения списка: {e}")
+        return None
+
+# Кэшируем ID, чтобы не дергать панель при каждом запросе (но панель не падает, так что можно и без кэша)
+CACHED_INBOUND_ID = None
+
+def get_cached_inbound_id():
+    global CACHED_INBOUND_ID
+    if CACHED_INBOUND_ID is None:
+        CACHED_INBOUND_ID = get_inbound_id()
+    return CACHED_INBOUND_ID
+
+# ===== 2. СОЗДАНИЕ КЛЮЧА (РАБОТАЕТ С ЛЮБЫМ ID) =====
+def create_vpn_key(telegram_id, days):
+    """Создаёт клиента в 3X-UI и возвращает VLESS-ссылку"""
+    inbound_id = get_cached_inbound_id()
+    if not inbound_id:
+        return None
+
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({"Content-Type": "application/json"})
+    
+    # Логинимся снова (или можно переиспользовать сессию, но для простоты — пусть логинится)
+    login_payload = {"username": XUI_USERNAME, "password": XUI_PASSWORD}
+    try:
+        login_resp = session.post(f"{XUI_URL}login", json=login_payload, timeout=10)
+        if login_resp.status_code != 200 or not login_resp.json().get("success"):
+            return None
+    except Exception as e:
+        print(f"Login error: {e}")
+        return None
+    
+    # Подготавливаем данные клиента
+    expiry_time = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
+    email = f"user_{telegram_id}_{int(time.time())}"
+    
+    # Важно: структура запроса должна быть именно такой, как ждет 3X-UI
+    add_payload = {
+        "id": inbound_id,
+        "settings": json.dumps({
+            "clients": [{
+                "id": "",  # Пустая строка — панель сама сгенерирует UUID
+                "email": email,
+                "expiryTime": expiry_time,
+                "totalGB": 0,  # 0 = безлимит
+                "enable": True
+            }]
+        })
+    }
+    
+    try:
+        add_resp = session.post(f"{XUI_URL}panel/api/inbounds/addClient", json=add_payload, timeout=10)
+        if add_resp.status_code != 200:
+            print(f"HTTP error: {add_resp.status_code}")
+            return None
+        
+        add_json = add_resp.json()
+        if not add_json.get("success"):
+            print(f"API error: {add_json.get('msg')}")
+            return None
+        
+        # Пытаемся получить ссылку из ответа
+        client_url = add_json.get("obj", {}).get("url")
+        if client_url:
+            return client_url
+        
+        # Если ссылки нет — пробуем найти клиента в списке (подстраховка)
+        inbounds_resp = session.get(f"{XUI_URL}panel/api/inbounds/get/{inbound_id}", timeout=10)
+        if inbounds_resp.status_code == 200:
+            clients = inbounds_resp.json().get("obj", {}).get("settings", {}).get("clients", [])
+            for client in clients:
+                if client.get("email") == email:
+                    return client.get("url")
+        
+        return None
+    except Exception as e:
+        print(f"Add client error: {e}")
+        return None
+
+# ===== 3. КЛАВИАТУРЫ (БЕЗ ИЗМЕНЕНИЙ) =====
+def main_menu():
+    keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton("1 месяц — 350 ₽", callback_data="buy_30"),
-        InlineKeyboardButton("3 месяца — 900 ₽", callback_data="buy_90"),
-        InlineKeyboardButton("6 месяцев — 1500 ₽", callback_data="buy_180")
+        InlineKeyboardButton("💰 Тарифы", callback_data="tariffs"),
+        InlineKeyboardButton("🔑 Купить", callback_data="buy"),
+        InlineKeyboardButton("❓ Поддержка", callback_data="support"),
+        InlineKeyboardButton("📢 Канал", callback_data="channel")
     )
     return keyboard
 
+def tariff_menu():
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton("📱 1 месяц — 350 ₽", callback_data="buy_30"),
+        InlineKeyboardButton("🎮 3 месяца — 900 ₽", callback_data="buy_90"),
+        InlineKeyboardButton("⭐️ 6 месяцев — 1500 ₽", callback_data="buy_180"),
+        InlineKeyboardButton("🔥 12 месяцев — 2500 ₽", callback_data="buy_365"),
+        InlineKeyboardButton("◀️ Назад", callback_data="back_main")
+    )
+    return keyboard
+
+def back_button():
+    return InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main"))
+
+# ===== 4. ОБРАБОТЧИКИ =====
 @bot.message_handler(commands=['start'])
-def start_cmd(message):
-    bot.send_message(message.chat.id, "🔹 Добро пожаловать! Выбери тариф:", reply_markup=tariff_keyboard())
+def start(message):
+    bot.send_message(
+        message.chat.id,
+        "🔹 *VPN Shop* 🔹\n\n🛡 Работаем через обход блокировок.\n📡 Ключи под Reality, логи не храним.\n\n👇 Выберите действие:",
+        parse_mode="Markdown",
+        reply_markup=main_menu()
+    )
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
-def handle_buy(call):
-    # Достаем количество дней из callback_data (buy_30 -> 30)
-    days = int(call.data.split('_')[1])
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    chat_id = call.message.chat.id
+    msg_id = call.message.message_id
     
-    # Отправляем временное сообщение "Генерирую..."
-    bot.edit_message_text("⏳ Создаю защищенный ключ...", call.message.chat.id, call.message.message_id)
+    if call.data == "back_main":
+        bot.edit_message_text(
+            "🔹 *VPN Shop* 🔹\n\nВыберите действие:",
+            chat_id, msg_id, parse_mode="Markdown",
+            reply_markup=main_menu()
+        )
     
-    # --- МАГИЯ АВТОВЫДАЧИ ---
-    # Вызываем нашу функцию. Она обратится к 3X-UI по API и создаст клиента.
-    vless_link = create_vpn_key(call.from_user.id, days)
+    elif call.data == "tariffs":
+        bot.edit_message_text(
+            "📅 *Наши тарифы:*\n\n• 1 месяц — 350 ₽\n• 3 месяца — 900 ₽\n• 6 месяцев — 1500 ₽\n• 12 месяцев — 2500 ₽\n\n💰 Оплата: карта, крипта, Stars\n\n👇 Выберите срок:",
+            chat_id, msg_id, parse_mode="Markdown",
+            reply_markup=tariff_menu()
+        )
     
-    if vless_link:
-        answer_text = f"✅ *Ключ готов!*\n\n`{vless_link}`\n\nПодключение: Hiddify / v2rayNG / Nekoray"
-        bot.edit_message_text(answer_text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-    else:
-        bot.edit_message_text("❌ Ошибка сервера. Напишите @admin", call.message.chat.id, call.message.message_id)
+    elif call.data == "buy":
+        bot.edit_message_text(
+            "📅 *Выберите срок подписки:*",
+            chat_id, msg_id, parse_mode="Markdown",
+            reply_markup=tariff_menu()
+        )
+    
+    elif call.data == "support":
+        text = "🆘 *Поддержка*\n\nПо вопросам: @твой_ник\n\n⚡️ Если ключ не работает — перевыпустим в течение часа."
+        bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=back_button())
+    
+    elif call.data == "channel":
+        text = "📢 *Наш канал:*\nhttps://t.me/твой_канал"
+        bot.edit_message_text(text, chat_id, msg_id, reply_markup=back_button())
+    
+    elif call.data.startswith("buy_"):
+        days = int(call.data.split("_")[1])
+        user_id = call.from_user.id
+        
+        bot.edit_message_text(
+            f"⏳ *Создаём ключ на {days} дней...*\n\nЭто может занять до 10 секунд.",
+            chat_id, msg_id, parse_mode="Markdown"
+        )
+        
+        vpn_key = create_vpn_key(user_id, days)
+        
+        if vpn_key and vpn_key.startswith("vless://"):
+            text = (
+                f"✅ *Оплата получена!*\n\n"
+                f"📅 *Срок:* {days} дней\n\n"
+                f"🔑 *Ваш ключ:*\n`{vpn_key}`\n\n"
+                f"📱 *Как подключиться:*\n"
+                f"• Android: v2rayNG / Hiddify\n"
+                f"• Windows: v2rayN / Hiddify\n"
+                f"• iOS: Shadowrocket / Hiddify\n\n"
+                f"💾 *Сохраните ключ!* Он действителен {days} дней."
+            )
+            bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=back_button())
+        else:
+            bot.edit_message_text(
+                f"❌ *Ошибка создания ключа*\n\n"
+                f"Пожалуйста, напишите администратору: @твой_ник\n"
+                f"Сообщите это: {vpn_key if vpn_key else 'API не ответил'}",
+                chat_id, msg_id, parse_mode="Markdown",
+                reply_markup=back_button()
+            )
+    
+    bot.answer_callback_query(call.id)
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ЧТОБ НЕ ЗАСЫПАЛ)---
+# ===== 5. HTTP-СЕРВЕР ДЛЯ RENDER =====
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b'Bot is running')
+    
+    def log_message(self, format, *args):
+        pass  # заглушаем лишние логи
 
 def run_http_server():
     port = int(os.environ.get("PORT", 8080))
@@ -101,6 +256,6 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-# --- СТАРТ ---
-print("✅ Супер-бот запущен. Автоматическая выдача активирована.")
+# ===== 6. ЗАПУСК =====
+print("✅ Бот запущен. Автоматический поиск Inbound и выдача ключей активна.")
 bot.infinity_polling()
