@@ -11,36 +11,40 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ========== ТВОИ ДАННЫЕ ==========
 TOKEN = "8703864624:AAGzkhvrv93U6k0a-6FNMz_ieeL8SQXQiVk"
-XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"
+XUI_URL = "https://72.56.119.147:8443/L7nSikoltRgG5CM2GC"
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
 PUBLIC_KEY = "GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE"
 
 bot = telebot.TeleBot(TOKEN)
 
-# ========== ПОЛУЧАЕМ ID VLESS INBOUND ==========
-def get_inbound_id():
+# ========== ПОЛУЧАЕМ ID И ПОРТ VLESS INBOUND ==========
+def get_inbound_info():
     try:
         sess = requests.Session()
         sess.verify = False
         login = sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
         if login.status_code != 200 or not login.json().get("success"):
-            return None
+            return None, None
         resp = sess.get(f"{XUI_URL}/panel/api/inbounds/list", timeout=10)
         if resp.status_code != 200:
-            return None
+            return None, None
         for inbound in resp.json().get("obj", []):
             if inbound.get("protocol") == "vless":
-                return inbound.get("id")
+                inbound_id = inbound.get("id")
+                port = inbound.get("port")
+                print(f"Найден Inbound ID: {inbound_id}, порт: {port}")
+                return inbound_id, port
+        return None, None
     except Exception as e:
-        print(f"get_inbound_id error: {e}")
-    return None
+        print(f"Ошибка get_inbound_info: {e}")
+        return None, None
 
-# ========== СОЗДАНИЕ УНИКАЛЬНОГО КЛЮЧА ==========
+# ========== СОЗДАНИЕ КЛЮЧА С АВТОМАТИЧЕСКИМ ПОРТОМ ==========
 def create_vpn_key(days):
-    inbound_id = get_inbound_id()
+    inbound_id, port = get_inbound_info()
     if not inbound_id:
-        return "❌ Ошибка: нет VLESS подключения в панели. Создайте его."
+        return "❌ Ошибка: VLESS Inbound не найден. Создайте его в панели."
 
     sess = requests.Session()
     sess.verify = False
@@ -68,9 +72,9 @@ def create_vpn_key(days):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                # Чистый IP без порта
+                # Получаем хост из XUI_URL (без порта)
                 host = XUI_URL.split("//")[1].split("/")[0].split(":")[0]
-                vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={PUBLIC_KEY}&type=tcp&headerType=none#{email}"
+                vless_link = f"vless://{client_id}@{host}:{port}?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={PUBLIC_KEY}&type=tcp&headerType=none#{email}"
                 return vless_link
             else:
                 return f"❌ Ошибка API: {data.get('msg')}"
@@ -97,10 +101,10 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     days = int(call.data)
-    bot.edit_message_text(f"⏳ *Создаю уникальный ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text(f"⏳ *Создаю ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     key = create_vpn_key(days)
     if key.startswith("vless://"):
-        bot.edit_message_text(f"✅ *Твой ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     else:
         bot.edit_message_text(key, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
@@ -120,5 +124,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. Автоматическая генерация ключей активна.")
+print("✅ Бот запущен. Автоматическое определение порта активно.")
 bot.infinity_polling()
