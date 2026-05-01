@@ -1,5 +1,9 @@
 import os
 import telebot
+import requests
+import json
+import time
+from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -7,22 +11,63 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 TOKEN = os.environ.get("BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
-# --- Главное меню (inline кнопки) ---
+# === НАСТРОЙКИ 3X-UI ===
+XUI_URL = os.environ.get("XUI_URL")
+XUI_USERNAME = os.environ.get("XUI_USERNAME")
+XUI_PASSWORD = os.environ.get("XUI_PASSWORD")
+
+def create_vpn_key(expiry_days):
+    try:
+        session = requests.Session()
+        session.verify = False
+        login_resp = session.post(f"{XUI_URL}login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
+        if login_resp.status_code != 200 or not login_resp.json().get("success"):
+            return None
+        inbounds_resp = session.get(f"{XUI_URL}panel/api/inbounds/list")
+        inbounds = inbounds_resp.json().get("obj", [])
+        inbound_id = None
+        for inbound in inbounds:
+            if inbound.get("protocol") == "vless":
+                inbound_id = inbound.get("id")
+                break
+        if not inbound_id:
+            return None
+        expiry_time = int((datetime.now() + timedelta(days=expiry_days)).timestamp() * 1000)
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps({
+                "clients": [{
+                    "id": "",
+                    "email": f"user_{int(time.time())}",
+                    "expiryTime": expiry_time,
+                    "totalGB": 0,
+                    "enable": True
+                }]
+            })
+        }
+        add_resp = session.post(f"{XUI_URL}panel/api/inbounds/addClient", json=payload)
+        if add_resp.status_code == 200 and add_resp.json().get("success"):
+            return add_resp.json().get("obj", {}).get("url", "Ошибка: ссылка не получена")
+        return None
+    except Exception as e:
+        print(f"Ошибка создания ключа: {e}")
+        return None
+
+# === КЛАВИАТУРЫ ===
 def main_menu():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
-        InlineKeyboardButton(" Тарифы", callback_data="tariffs"),
-        InlineKeyboardButton(" Купить", callback_data="buy"),
-        InlineKeyboardButton(" Поддержка", callback_data="support"),
-        InlineKeyboardButton(" Канал", callback_data="channel")
+        InlineKeyboardButton("💰 Тарифы", callback_data="tariffs"),
+        InlineKeyboardButton("🔑 Купить", callback_data="buy"),
+        InlineKeyboardButton("❓ Поддержка", callback_data="support"),
+        InlineKeyboardButton("📢 Канал", callback_data="channel")
     )
     return keyboard
 
-# --- Меню выбора тарифа ---
 def tariff_menu():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
-        InlineKeyboardButton("1 месяц — 350 ₽", callback_data="tariff_1m"),
+        InlineKeyboardButton("1 месяц — 100 ₽", callback_data="tariff_1m"),
         InlineKeyboardButton("3 месяца — 900 ₽", callback_data="tariff_3m"),
         InlineKeyboardButton("6 месяцев — 1500 ₽", callback_data="tariff_6m"),
         InlineKeyboardButton("12 месяцев — 2500 ₽", callback_data="tariff_12m"),
@@ -30,171 +75,37 @@ def tariff_menu():
     )
     return keyboard
 
-# --- Меню оплаты (после выбора тарифа) ---
-def payment_menu(tariff, price):
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        InlineKeyboardButton("💳 Оплатить картой", callback_data=f"card_{tariff}_{price}"),
-        InlineKeyboardButton("⭐ Telegram Stars", callback_data=f"stars_{tariff}_{price}"),
-        InlineKeyboardButton("◀️ Назад", callback_data="back_tariffs")
-    )
-    return keyboard
-
-# --- Стартовая команда /start ---
+# === ОБРАБОТЧИКИ ===
 @bot.message_handler(commands=['start'])
 def start(message):
-    text = (
-        "🔹 *VPN Shop* 🔹\n\n"
-        "Работаем через обход блокировок.\n"
-        "Ключи под Reality. Логи не храним.\n\n"
-        "Оплата: карта, крипта, Telegram Stars.\n\n"
-        "Выберите действие:"
-    )
-    bot.send_message(
-        message.chat.id,
-        text,
-        parse_mode="Markdown",
-        reply_markup=main_menu()
-    )
+    bot.send_message(message.chat.id, "🔹 *VPN Shop* 🔹\n\nВыберите действие:", parse_mode="Markdown", reply_markup=main_menu())
 
-# --- Обработка всех нажатий на кнопки ---
 @bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
+def callback(call):
     chat_id = call.message.chat.id
-    message_id = call.message.message_id
-
-    # Главное меню
+    msg_id = call.message.message_id
+    
     if call.data == "back_main":
-        bot.edit_message_text(
-            "🔹 *VPN Shop* 🔹\n\nРаботаем через обход блокировок.\nКлючи под Reality. Логи не храним.\n\nВыберите действие:",
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=main_menu()
-        )
-
+        bot.edit_message_text("🔹 *VPN Shop* 🔹\n\nВыберите действие:", chat_id, msg_id, parse_mode="Markdown", reply_markup=main_menu())
     elif call.data == "tariffs":
-        bot.edit_message_text(
-            "📅 *Выберите срок подписки:*",
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=tariff_menu()
-        )
-
+        bot.edit_message_text("📅 *Выберите срок:*", chat_id, msg_id, parse_mode="Markdown", reply_markup=tariff_menu())
     elif call.data == "buy":
-        bot.edit_message_text(
-            "📅 *Сначала выберите тариф:*",
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=tariff_menu()
-        )
-
+        bot.edit_message_text("📅 *Выберите срок:*", chat_id, msg_id, parse_mode="Markdown", reply_markup=tariff_menu())
     elif call.data == "support":
-        text = (
-            "🆘 *Поддержка*\n\n"
-            "Если ключ не работает — перевыпустим в течение часа.\n"
-            "Среднее время ответа: 15 минут.\n\n"
-            "По вопросам: @??who_u_foolin??"
-        )
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_main"))
-        bot.edit_message_text(
-            text,
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-
+        bot.edit_message_text("🆘 *Поддержка*\n\nПо вопросам: @твой_ник", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
     elif call.data == "channel":
-        text = "📢 Наш канал: https://t.me/твой_канал"
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ Назад", callback_data="back_main"))
-        bot.edit_message_text(
-            text,
-            chat_id,
-            message_id,
-            reply_markup=keyboard
-        )
-
-    # Назад к тарифам
-    elif call.data == "back_tariffs":
-        bot.edit_message_text(
-            "📅 *Выберите срок подписки:*",
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=tariff_menu()
-        )
-
-    # --- Выбор тарифа ---
+        bot.edit_message_text("📢 Канал: https://t.me/твой_канал", chat_id, msg_id, reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
     elif call.data.startswith("tariff_"):
-        tariff_map = {
-            "tariff_1m": ("1 месяц", 350),
-            "tariff_3m": ("3 месяца", 900),
-            "tariff_6m": ("6 месяцев", 1500),
-            "tariff_12m": ("12 месяцев", 2500)
-        }
-        tariff, price = tariff_map.get(call.data, ("Неизвестно", 0))
-        bot.edit_message_text(
-            f"✅ *Вы выбрали: {tariff} — {price} ₽*\n\nВыберите способ оплаты:",
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=payment_menu(tariff, price)
-        )
-
-    # --- Оплата картой ---
-    elif call.data.startswith("card_"):
-        parts = call.data.split("_")
-        tariff = parts[1]
-        price = parts[2]
-        text = (
-            f"💳 *Оплата картой*\n\n"
-            f"Тариф: {tariff} — {price} ₽\n\n"
-            f"Реквизиты для перевода:\n"
-            f"• Карта: 1234 5678 9012 3456\n"
-            f"• Получатель: Примерский Пример Примерович\n\n"
-            f"После оплаты пришлите чек сюда, и мы выдадим ключ в течение 5 минут."
-        )
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ К тарифам", callback_data="back_tariffs"))
-        bot.edit_message_text(
-            text,
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-
-    # --- Оплата Stars ---
-    elif call.data.startswith("stars_"):
-        parts = call.data.split("_")
-        tariff = parts[1]
-        price = parts[2]
-        text = (
-            f"⭐ *Оплата Telegram Stars*\n\n"
-            f"Тариф: {tariff} — {price} ₽\n\n"
-            f"Для оплаты перейдите по платёжной ссылке:\n"
-            f"👉 [Оплатить Stars](https://t.me/ссылка)\n\n"
-            f"После оплаты ключ придёт автоматически."
-        )
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("◀️ К тарифам", callback_data="back_tariffs"))
-        bot.edit_message_text(
-            text,
-            chat_id,
-            message_id,
-            parse_mode="Markdown",
-            reply_markup=keyboard
-        )
-
-    # Обязательный ответ на callback (чтобы убрать часики)
+        days = {"tariff_1m": 30, "tariff_3m": 90, "tariff_6m": 180, "tariff_12m": 365}.get(call.data, 30)
+        bot.edit_message_text(f"⏳ *Создаём ключ на {days} дней...*", chat_id, msg_id, parse_mode="Markdown")
+        key = create_vpn_key(days)
+        if key:
+            bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`\n\nПодключение: Hiddify / v2rayNG / Nekoray", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ В меню", callback_data="back_main")))
+        else:
+            bot.edit_message_text("❌ *Ошибка создания ключа.* Напишите админу.", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
     bot.answer_callback_query(call.id)
 
-# --- HTTP-сервер для Render ---
+# === HTTP-сервер для Render ===
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -208,5 +119,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ VPN Shop Bot (Inline) запущен")
+print("✅ Бот запущен")
 bot.infinity_polling()
