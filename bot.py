@@ -16,23 +16,63 @@ XUI_URL = os.environ.get("XUI_URL")
 XUI_USERNAME = os.environ.get("XUI_USERNAME")
 XUI_PASSWORD = os.environ.get("XUI_PASSWORD")
 
+# Отключаем предупреждения о SSL (для диагностики)
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 def create_vpn_key(expiry_days):
     try:
+        print(f"🔍 Начинаем диагностику...")
+        print(f"URL: {XUI_URL}")
+        print(f"Username: {XUI_USERNAME}")
+        
         session = requests.Session()
         session.verify = False
-        login_resp = session.post(f"{XUI_URL}login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
-        if login_resp.status_code != 200 or not login_resp.json().get("success"):
-            return None
-        inbounds_resp = session.get(f"{XUI_URL}panel/api/inbounds/list")
-        inbounds = inbounds_resp.json().get("obj", [])
+        
+        # Шаг 1: Логин
+        print("1️⃣ Пытаемся залогиниться...")
+        login_resp = session.post(f"{XUI_URL}login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
+        print(f"Статус логина: {login_resp.status_code}")
+        print(f"Ответ: {login_resp.text[:200] if login_resp.text else 'пусто'}")
+        
+        if login_resp.status_code != 200:
+            return f"Ошибка: панель не ответила (код {login_resp.status_code})"
+        
+        login_json = login_resp.json()
+        if not login_json.get("success"):
+            return f"Ошибка логина: {login_json.get('msg', 'неизвестная ошибка')}"
+        
+        print("✅ Логин успешен!")
+        
+        # Шаг 2: Получаем список inbound
+        print("2️⃣ Получаем список подключений...")
+        inbounds_resp = session.get(f"{XUI_URL}panel/api/inbounds/list", timeout=10)
+        print(f"Статус: {inbounds_resp.status_code}")
+        
+        if inbounds_resp.status_code != 200:
+            return f"Ошибка получения списка: код {inbounds_resp.status_code}"
+        
+        data = inbounds_resp.json()
+        inbounds = data.get("obj", [])
+        print(f"Найдено inbound: {len(inbounds)}")
+        
+        # Ищем vless inbound
         inbound_id = None
         for inbound in inbounds:
+            print(f"  - ID: {inbound.get('id')}, Протокол: {inbound.get('protocol')}")
             if inbound.get("protocol") == "vless":
                 inbound_id = inbound.get("id")
                 break
+        
         if not inbound_id:
-            return None
+            return "Ошибка: не найден VLESS inbound. Создайте его в панели 3X-UI"
+        
+        print(f"✅ Найден inbound ID: {inbound_id}")
+        
+        # Шаг 3: Создаём клиента
+        print("3️⃣ Создаём клиента...")
         expiry_time = int((datetime.now() + timedelta(days=expiry_days)).timestamp() * 1000)
+        
         payload = {
             "id": inbound_id,
             "settings": json.dumps({
@@ -45,13 +85,28 @@ def create_vpn_key(expiry_days):
                 }]
             })
         }
-        add_resp = session.post(f"{XUI_URL}panel/api/inbounds/addClient", json=payload)
-        if add_resp.status_code == 200 and add_resp.json().get("success"):
-            return add_resp.json().get("obj", {}).get("url", "Ошибка: ссылка не получена")
-        return None
+        
+        add_resp = session.post(f"{XUI_URL}panel/api/inbounds/addClient", json=payload, timeout=10)
+        print(f"Статус создания: {add_resp.status_code}")
+        print(f"Ответ: {add_resp.text[:300] if add_resp.text else 'пусто'}")
+        
+        if add_resp.status_code == 200:
+            result = add_resp.json()
+            if result.get("success"):
+                client_url = result.get("obj", {}).get("url")
+                if client_url:
+                    return client_url
+                else:
+                    return f"Клиент создан, но не получена ссылка. Ответ: {result}"
+            else:
+                return f"Ошибка API: {result.get('msg', 'неизвестная ошибка')}"
+        else:
+            return f"HTTP ошибка {add_resp.status_code}: {add_resp.text[:200]}"
+            
+    except requests.exceptions.ConnectionError as e:
+        return f"Ошибка подключения к панели: {e}"
     except Exception as e:
-        print(f"Ошибка создания ключа: {e}")
-        return None
+        return f"Общая ошибка: {type(e).__name__}: {e}"
 
 # === КЛАВИАТУРЫ ===
 def main_menu():
@@ -67,7 +122,7 @@ def main_menu():
 def tariff_menu():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
-        InlineKeyboardButton("1 месяц — 100 ₽", callback_data="tariff_1m"),
+        InlineKeyboardButton("1 месяц — 350 ₽", callback_data="tariff_1m"),
         InlineKeyboardButton("3 месяца — 900 ₽", callback_data="tariff_3m"),
         InlineKeyboardButton("6 месяцев — 1500 ₽", callback_data="tariff_6m"),
         InlineKeyboardButton("12 месяцев — 2500 ₽", callback_data="tariff_12m"),
@@ -75,7 +130,6 @@ def tariff_menu():
     )
     return keyboard
 
-# === ОБРАБОТЧИКИ ===
 @bot.message_handler(commands=['start'])
 def start(message):
     bot.send_message(message.chat.id, "🔹 *VPN Shop* 🔹\n\nВыберите действие:", parse_mode="Markdown", reply_markup=main_menu())
@@ -99,10 +153,7 @@ def callback(call):
         days = {"tariff_1m": 30, "tariff_3m": 90, "tariff_6m": 180, "tariff_12m": 365}.get(call.data, 30)
         bot.edit_message_text(f"⏳ *Создаём ключ на {days} дней...*", chat_id, msg_id, parse_mode="Markdown")
         key = create_vpn_key(days)
-        if key:
-            bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`\n\nПодключение: Hiddify / v2rayNG / Nekoray", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ В меню", callback_data="back_main")))
-        else:
-            bot.edit_message_text("❌ *Ошибка создания ключа.* Напишите админу.", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
+        bot.edit_message_text(f"🔍 *Результат диагностики:*\n`{key}`", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
     bot.answer_callback_query(call.id)
 
 # === HTTP-сервер для Render ===
@@ -119,5 +170,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен")
+print("✅ Диагностический бот запущен")
 bot.infinity_polling()
