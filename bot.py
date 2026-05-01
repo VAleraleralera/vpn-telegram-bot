@@ -10,7 +10,7 @@ from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # === ТВОИ НАСТРОЙКИ ===
-TOKEN = "8170833077:AAHBUGI755l6UNOKVBooNLhMh-uG1iXEmEo"
+TOKEN = "8703864624:AAGzkhvrv93U6k0a-6FNMz_ieeL8SQXQiVk"
 XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
