@@ -34,7 +34,7 @@ def get_inbound_id():
 def create_vpn_key(days):
     inbound_id = get_inbound_id()
     if not inbound_id:
-        return None
+        return "❌ Нет VLESS подключения. Создайте его в панели (Inbounds → Add Inbound → VLESS)."
     session = requests.Session()
     session.verify = False
     session.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
@@ -55,7 +55,7 @@ def create_vpn_key(days):
     resp = session.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload)
     if resp.status_code == 200 and resp.json().get("success"):
         return resp.json().get("obj", {}).get("url")
-    return None
+    return f"❌ Ошибка: {resp.status_code} {resp.text[:200]}"
 
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
@@ -79,7 +79,7 @@ def callback(call):
     if key and key.startswith("vless://"):
         bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     else:
-        bot.edit_message_text("❌ *Ошибка.* Напиши админу.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"❌ {key}", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
