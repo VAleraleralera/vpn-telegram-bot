@@ -1,162 +1,93 @@
 import os
 import telebot
-import requests
-import json
-import time
-from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+# Импортируем нормальный клиент для 3X-UI
+from client3x import Client3XUI, ClientPayload
+
+# ----- ТВОИ НАСТРОЙКИ (ВСТАВЬ СВОИ ДАННЫЕ) -----
 TOKEN = os.environ.get("BOT_TOKEN")
+PANEL_URL = "http://72.56.119.147:54321/mKZdh18YN6yXlsRTkR/"  # Твой URL панели
+PANEL_USERNAME = "admin"
+PANEL_PASSWORD = "admin"
+INBOUND_ID = 1  # ID твоего VLESS подключения (скорее всего 1)
+# ------------------------------------------------
+
 bot = telebot.TeleBot(TOKEN)
 
-# === НАСТРОЙКИ 3X-UI ===
-XUI_URL = os.environ.get("XUI_URL")
-XUI_USERNAME = os.environ.get("XUI_USERNAME")
-XUI_PASSWORD = os.environ.get("XUI_PASSWORD")
+# --- ИНИЦИАЛИЗАЦИЯ API ---
+# Это сердце автомата. Библиотека сама решит проблему с протоколом.
+api_client = Client3XUI(
+    panel_host=PANEL_URL,
+    login=PANEL_USERNAME,
+    password=PANEL_PASSWORD,
+    inbound_id=INBOUND_ID,
+    logging_enabled=True  # Чтобы видеть логи в Render
+)
 
-# Отключаем предупреждения о SSL (для диагностики)
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-def create_vpn_key(expiry_days):
+def create_vpn_key(user_telegram_id, days=30):
+    """Создает ключ через API и возвращает VLESS-ссылку"""
     try:
-        print(f"🔍 Начинаем диагностику...")
-        print(f"URL: {XUI_URL}")
-        print(f"Username: {XUI_USERNAME}")
+        # 1. Создаем "клиента" (пользователя) для панели
+        # Используем client3x для создания правильного JSON-запроса[citation:3]
+        payload = ClientPayload(
+            inbound_id=INBOUND_ID,
+            user_id=user_telegram_id,
+            email=f"user_{user_telegram_id}",
+            expiry_days=days,  # библиотека сама переведет дни в timestamp
+            traffic_GB=0,      # 0 = безлимит
+            flow="xtls-rprx-vision"
+        )
         
-        session = requests.Session()
-        session.verify = False
+        # 2. Отправляем запрос в панель
+        response = api_client.add_client(payload)
         
-        # Шаг 1: Логин
-        print("1️⃣ Пытаемся залогиниться...")
-        login_resp = session.post(f"{XUI_URL}login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
-        print(f"Статус логина: {login_resp.status_code}")
-        print(f"Ответ: {login_resp.text[:200] if login_resp.text else 'пусто'}")
-        
-        if login_resp.status_code != 200:
-            return f"Ошибка: панель не ответила (код {login_resp.status_code})"
-        
-        login_json = login_resp.json()
-        if not login_json.get("success"):
-            return f"Ошибка логина: {login_json.get('msg', 'неизвестная ошибка')}"
-        
-        print("✅ Логин успешен!")
-        
-        # Шаг 2: Получаем список inbound
-        print("2️⃣ Получаем список подключений...")
-        inbounds_resp = session.get(f"{XUI_URL}panel/api/inbounds/list", timeout=10)
-        print(f"Статус: {inbounds_resp.status_code}")
-        
-        if inbounds_resp.status_code != 200:
-            return f"Ошибка получения списка: код {inbounds_resp.status_code}"
-        
-        data = inbounds_resp.json()
-        inbounds = data.get("obj", [])
-        print(f"Найдено inbound: {len(inbounds)}")
-        
-        # Ищем vless inbound
-        inbound_id = None
-        for inbound in inbounds:
-            print(f"  - ID: {inbound.get('id')}, Протокол: {inbound.get('protocol')}")
-            if inbound.get("protocol") == "vless":
-                inbound_id = inbound.get("id")
-                break
-        
-        if not inbound_id:
-            return "Ошибка: не найден VLESS inbound. Создайте его в панели 3X-UI"
-        
-        print(f"✅ Найден inbound ID: {inbound_id}")
-        
-        # Шаг 3: Создаём клиента
-        print("3️⃣ Создаём клиента...")
-        expiry_time = int((datetime.now() + timedelta(days=expiry_days)).timestamp() * 1000)
-        
-        payload = {
-            "id": inbound_id,
-            "settings": json.dumps({
-                "clients": [{
-                    "id": "",
-                    "email": f"user_{int(time.time())}",
-                    "expiryTime": expiry_time,
-                    "totalGB": 0,
-                    "enable": True
-                }]
-            })
-        }
-        
-        add_resp = session.post(f"{XUI_URL}panel/api/inbounds/addClient", json=payload, timeout=10)
-        print(f"Статус создания: {add_resp.status_code}")
-        print(f"Ответ: {add_resp.text[:300] if add_resp.text else 'пусто'}")
-        
-        if add_resp.status_code == 200:
-            result = add_resp.json()
-            if result.get("success"):
-                client_url = result.get("obj", {}).get("url")
-                if client_url:
-                    return client_url
-                else:
-                    return f"Клиент создан, но не получена ссылка. Ответ: {result}"
-            else:
-                return f"Ошибка API: {result.get('msg', 'неизвестная ошибка')}"
+        if response.get('success'):
+            # 3. Получаем ссылку на подключение
+            # Ссылка обычно приходит в ответе или генерируется через get_client_url
+            client_url = api_client.get_client_url(email=f"user_{user_telegram_id}")
+            return client_url
         else:
-            return f"HTTP ошибка {add_resp.status_code}: {add_resp.text[:200]}"
-            
-    except requests.exceptions.ConnectionError as e:
-        return f"Ошибка подключения к панели: {e}"
+            return None
     except Exception as e:
-        return f"Общая ошибка: {type(e).__name__}: {e}"
+        print(f"🔥 Ошибка создания ключа: {e}")
+        return None
 
-# === КЛАВИАТУРЫ ===
-def main_menu():
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        InlineKeyboardButton("💰 Тарифы", callback_data="tariffs"),
-        InlineKeyboardButton("🔑 Купить", callback_data="buy"),
-        InlineKeyboardButton("❓ Поддержка", callback_data="support"),
-        InlineKeyboardButton("📢 Канал", callback_data="channel")
-    )
-    return keyboard
-
-def tariff_menu():
+# --- КЛАВИАТУРЫ ---
+def tariff_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=1)
     keyboard.add(
-        InlineKeyboardButton("1 месяц — 350 ₽", callback_data="tariff_1m"),
-        InlineKeyboardButton("3 месяца — 900 ₽", callback_data="tariff_3m"),
-        InlineKeyboardButton("6 месяцев — 1500 ₽", callback_data="tariff_6m"),
-        InlineKeyboardButton("12 месяцев — 2500 ₽", callback_data="tariff_12m"),
-        InlineKeyboardButton("◀️ Назад", callback_data="back_main")
+        InlineKeyboardButton("1 месяц — 350 ₽", callback_data="buy_30"),
+        InlineKeyboardButton("3 месяца — 900 ₽", callback_data="buy_90"),
+        InlineKeyboardButton("6 месяцев — 1500 ₽", callback_data="buy_180")
     )
     return keyboard
 
 @bot.message_handler(commands=['start'])
-def start(message):
-    bot.send_message(message.chat.id, "🔹 *VPN Shop* 🔹\n\nВыберите действие:", parse_mode="Markdown", reply_markup=main_menu())
+def start_cmd(message):
+    bot.send_message(message.chat.id, "🔹 Добро пожаловать! Выбери тариф:", reply_markup=tariff_keyboard())
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback(call):
-    chat_id = call.message.chat.id
-    msg_id = call.message.message_id
+@bot.callback_query_handler(func=lambda call: call.data.startswith('buy_'))
+def handle_buy(call):
+    # Достаем количество дней из callback_data (buy_30 -> 30)
+    days = int(call.data.split('_')[1])
     
-    if call.data == "back_main":
-        bot.edit_message_text("🔹 *VPN Shop* 🔹\n\nВыберите действие:", chat_id, msg_id, parse_mode="Markdown", reply_markup=main_menu())
-    elif call.data == "tariffs":
-        bot.edit_message_text("📅 *Выберите срок:*", chat_id, msg_id, parse_mode="Markdown", reply_markup=tariff_menu())
-    elif call.data == "buy":
-        bot.edit_message_text("📅 *Выберите срок:*", chat_id, msg_id, parse_mode="Markdown", reply_markup=tariff_menu())
-    elif call.data == "support":
-        bot.edit_message_text("🆘 *Поддержка*\n\nПо вопросам: @твой_ник", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
-    elif call.data == "channel":
-        bot.edit_message_text("📢 Канал: https://t.me/твой_канал", chat_id, msg_id, reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
-    elif call.data.startswith("tariff_"):
-        days = {"tariff_1m": 30, "tariff_3m": 90, "tariff_6m": 180, "tariff_12m": 365}.get(call.data, 30)
-        bot.edit_message_text(f"⏳ *Создаём ключ на {days} дней...*", chat_id, msg_id, parse_mode="Markdown")
-        key = create_vpn_key(days)
-        bot.edit_message_text(f"🔍 *Результат диагностики:*\n`{key}`", chat_id, msg_id, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup().add(InlineKeyboardButton("◀️ Назад", callback_data="back_main")))
-    bot.answer_callback_query(call.id)
+    # Отправляем временное сообщение "Генерирую..."
+    bot.edit_message_text("⏳ Создаю защищенный ключ...", call.message.chat.id, call.message.message_id)
+    
+    # --- МАГИЯ АВТОВЫДАЧИ ---
+    # Вызываем нашу функцию. Она обратится к 3X-UI по API и создаст клиента.
+    vless_link = create_vpn_key(call.from_user.id, days)
+    
+    if vless_link:
+        answer_text = f"✅ *Ключ готов!*\n\n`{vless_link}`\n\nПодключение: Hiddify / v2rayNG / Nekoray"
+        bot.edit_message_text(answer_text, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    else:
+        bot.edit_message_text("❌ Ошибка сервера. Напишите @admin", call.message.chat.id, call.message.message_id)
 
-# === HTTP-сервер для Render ===
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (ЧТОБ НЕ ЗАСЫПАЛ)---
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -170,5 +101,6 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Диагностический бот запущен")
+# --- СТАРТ ---
+print("✅ Супер-бот запущен. Автоматическая выдача активирована.")
 bot.infinity_polling()
