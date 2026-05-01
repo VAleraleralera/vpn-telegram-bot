@@ -8,10 +8,9 @@ from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
-import urllib3
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TOKEN = os.environ.get("BOT_TOKEN")
+# === ТВОИ НАСТРОЙКИ ===
+TOKEN = "8170833077:AAHBUGI755l6UNOKVBooNLhMh-uG1iXEmEo"
 XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
@@ -19,56 +18,74 @@ XUI_PASSWORD = "Vpn/AdMin.pas"
 bot = telebot.TeleBot(TOKEN)
 
 def get_inbound_id():
-    session = requests.Session()
-    session.verify = False
-    resp = session.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
-    if resp.status_code != 200 or not resp.json().get("success"):
-        print("Login failed")
+    try:
+        sess = requests.Session()
+        sess.verify = False
+        login = sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
+        if login.status_code != 200 or not login.json().get("success"):
+            return None
+        resp = sess.get(f"{XUI_URL}/panel/api/inbounds/list", timeout=10)
+        if resp.status_code != 200:
+            return None
+        for inbound in resp.json().get("obj", []):
+            if inbound.get("protocol") == "vless":
+                return inbound.get("id")
         return None
-    inbounds_resp = session.get(f"{XUI_URL}/panel/api/inbounds/list")
-    if inbounds_resp.status_code != 200:
-        print("Failed to get inbounds")
+    except:
         return None
-    for inbound in inbounds_resp.json().get("obj", []):
-        if inbound.get("protocol") == "vless":
-            return inbound.get("id")
-    print("No VLESS inbound found")
-    return None
 
 def create_vpn_key(days):
     inbound_id = get_inbound_id()
     if not inbound_id:
-        return "❌ VLESS inbound не найден. Создайте его в панели."
-    
-    session = requests.Session()
-    session.verify = False
-    session.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
-    
-    expiry_time = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
+        return "❌ Ошибка: нет VLESS подключения в панели. Создайте его."
+
+    sess = requests.Session()
+    sess.verify = False
+    sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
+    expiry = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
     client_id = str(uuid.uuid4())
     email = f"user_{int(time.time())}"
-    
+
     payload = {
         "id": inbound_id,
         "settings": json.dumps({
             "clients": [{
                 "id": client_id,
                 "email": email,
-                "expiryTime": expiry_time,
+                "expiryTime": expiry,
                 "totalGB": 0,
                 "enable": True
             }]
         })
     }
-    
-    resp = session.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload)
-    if resp.status_code == 200:
-        result = resp.json()
-        if result.get("success"):
-            return result.get("obj", {}).get("url")
+
+    try:
+        resp = sess.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload, timeout=30)
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                # Получаем публичный ключ из Inbound
+                public_key = ""
+                try:
+                    inb_resp = sess.get(f"{XUI_URL}/panel/api/inbounds/get/{inbound_id}", timeout=10)
+                    if inb_resp.status_code == 200:
+                        inb_data = inb_resp.json().get("obj", {})
+                        stream = json.loads(inb_data.get("streamSettings", "{}"))
+                        public_key = stream.get("realitySettings", {}).get("publicKey", "")
+                except:
+                    pass
+                if not public_key:
+                    public_key = "GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE"
+                # Собираем ссылку вручную
+                host = XUI_URL.split("//")[1].split("/")[0]
+                vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={public_key}&type=tcp&headerType=none#{email}"
+                return vless_link
+            else:
+                return f"❌ Ошибка API: {data.get('msg')}"
         else:
-            return f"❌ Ошибка API: {result.get('msg')}"
-    return f"❌ Ошибка HTTP: {resp.status_code}"
+            return f"❌ HTTP ошибка {resp.status_code}"
+    except Exception as e:
+        return f"❌ Исключение: {str(e)}"
 
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
@@ -89,12 +106,12 @@ def callback(call):
     days = int(call.data)
     bot.edit_message_text(f"⏳ *Создаю ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     key = create_vpn_key(days)
-    if key and key.startswith("vless://"):
+    if key.startswith("vless://"):
         bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     else:
-        bot.edit_message_text(f"❌ {key}", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text(key, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# HTTP-сервер для Render
+# === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -110,5 +127,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. Автовыдача ключей активна.")
+print("✅ Бот запущен. Автовыдача активна.")
 bot.infinity_polling()
