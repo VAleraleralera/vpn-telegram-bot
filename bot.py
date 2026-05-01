@@ -10,11 +10,11 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ===== НАСТРОЙКИ (ЧЕРЕЗ ПЕРЕМЕННЫЕ RENDER) =====
 TOKEN = os.environ.get("BOT_TOKEN")
-XUI_URL = os.environ.get("XUI_URL")           # Твой URL панели (http://IP:порт/путь/)
-XUI_USERNAME = os.environ.get("XUI_USERNAME") # Логин от панели (admin)
-XUI_PASSWORD = os.environ.get("XUI_PASSWORD") # Пароль от панели (admin)
+XUI_URL = os.environ.get("XUI_URL")           # http://72.56.119.147:54321/твой_путь/
+XUI_USERNAME = os.environ.get("XUI_USERNAME") # логин от панели (admin)
+XUI_PASSWORD = os.environ.get("XUI_PASSWORD") # пароль от панели
 
-# Отключаем warnings про SSL (для красоты)
+# Отключаем warnings про SSL
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -27,39 +27,55 @@ def get_inbound_id():
     session.verify = False
     session.headers.update({"Content-Type": "application/json"})
     
+    print(f"[DIAG] Пытаюсь залогиниться в {XUI_URL}login")
+    
     # Логинимся в панели
     login_payload = {"username": XUI_USERNAME, "password": XUI_PASSWORD}
     try:
         login_resp = session.post(f"{XUI_URL}login", json=login_payload, timeout=10)
-        if login_resp.status_code != 200 or not login_resp.json().get("success"):
-            print("❌ Ошибка логина при поиске Inbound")
+        print(f"[DIAG] Логин ответ: {login_resp.status_code}")
+        if login_resp.status_code != 200:
+            print(f"[DIAG] Тело ответа: {login_resp.text[:200]}")
+            return None
+        login_json = login_resp.json()
+        if not login_json.get("success"):
+            print(f"[DIAG] Ошибка логина API: {login_json.get('msg')}")
             return None
     except Exception as e:
-        print(f"Login error: {e}")
+        print(f"[DIAG] Ошибка логина: {e}")
         return None
-
+    
+    print("[DIAG] Логин успешен, получаем список Inbound...")
+    
     # Получаем список всех Inbound
     try:
         resp = session.get(f"{XUI_URL}panel/api/inbounds/list", timeout=10)
+        print(f"[DIAG] Список Inbound ответ: {resp.status_code}")
         if resp.status_code != 200:
+            print(f"[DIAG] Тело ответа: {resp.text[:200]}")
             return None
         
-        inbounds = resp.json().get("obj", [])
+        data = resp.json()
+        inbounds = data.get("obj", [])
+        print(f"[DIAG] Найдено Inbound: {len(inbounds)}")
         
         # Ищем первый Inbound с протоколом VLESS
         for inbound in inbounds:
-            if inbound.get("protocol") == "vless":
-                inbound_id = inbound.get("id")
-                print(f"✅ Найден Inbound ID {inbound_id} (протокол VLESS)")
+            protocol = inbound.get("protocol")
+            inbound_id = inbound.get("id")
+            remark = inbound.get("remark", "без имени")
+            print(f"[DIAG] Inbound ID {inbound_id}: {protocol} ({remark})")
+            if protocol == "vless":
+                print(f"[DIAG] ✅ ВЫБРАН Inbound ID {inbound_id}")
                 return inbound_id
         
-        print("❌ Не найден ни один Inbound с протоколом VLESS")
+        print("[DIAG] ❌ Не найден Inbound с протоколом VLESS")
         return None
     except Exception as e:
-        print(f"Ошибка получения списка: {e}")
+        print(f"[DIAG] Ошибка получения списка: {e}")
         return None
 
-# Кэшируем ID, чтобы не дергать панель при каждом запросе (но панель не падает, так что можно и без кэша)
+# Кэшируем ID
 CACHED_INBOUND_ID = None
 
 def get_cached_inbound_id():
@@ -68,40 +84,48 @@ def get_cached_inbound_id():
         CACHED_INBOUND_ID = get_inbound_id()
     return CACHED_INBOUND_ID
 
-# ===== 2. СОЗДАНИЕ КЛЮЧА (РАБОТАЕТ С ЛЮБЫМ ID) =====
+# ===== 2. СОЗДАНИЕ КЛЮЧА С ДИАГНОСТИКОЙ =====
 def create_vpn_key(telegram_id, days):
-    """Создаёт клиента в 3X-UI и возвращает VLESS-ссылку"""
+    """Создаёт клиента в 3X-UI и возвращает VLESS-ссылку или текст ошибки"""
+    result = []
+    
     inbound_id = get_cached_inbound_id()
     if not inbound_id:
-        return None
-
+        return "❌ Ошибка: не найден VLESS Inbound. Создайте его в панели 3X-UI"
+    
+    result.append(f"🔍 Найден Inbound ID: {inbound_id}")
+    
     session = requests.Session()
     session.verify = False
     session.headers.update({"Content-Type": "application/json"})
     
-    # Логинимся снова (или можно переиспользовать сессию, но для простоты — пусть логинится)
+    # Логинимся
     login_payload = {"username": XUI_USERNAME, "password": XUI_PASSWORD}
     try:
         login_resp = session.post(f"{XUI_URL}login", json=login_payload, timeout=10)
-        if login_resp.status_code != 200 or not login_resp.json().get("success"):
-            return None
+        result.append(f"🔐 Логин: HTTP {login_resp.status_code}")
+        if login_resp.status_code != 200:
+            return "\n".join(result) + f"\n\n❌ Ошибка логина: HTTP {login_resp.status_code}"
+        login_json = login_resp.json()
+        if not login_json.get("success"):
+            return "\n".join(result) + f"\n\n❌ Ошибка логина: {login_json.get('msg')}"
     except Exception as e:
-        print(f"Login error: {e}")
-        return None
+        return "\n".join(result) + f"\n\n❌ Ошибка соединения: {type(e).__name__} {e}"
     
-    # Подготавливаем данные клиента
+    result.append("✅ Авторизация успешна")
+    
+    # Создаём клиента
     expiry_time = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
     email = f"user_{telegram_id}_{int(time.time())}"
     
-    # Важно: структура запроса должна быть именно такой, как ждет 3X-UI
     add_payload = {
         "id": inbound_id,
         "settings": json.dumps({
             "clients": [{
-                "id": "",  # Пустая строка — панель сама сгенерирует UUID
+                "id": "",
                 "email": email,
                 "expiryTime": expiry_time,
-                "totalGB": 0,  # 0 = безлимит
+                "totalGB": 0,
                 "enable": True
             }]
         })
@@ -109,34 +133,26 @@ def create_vpn_key(telegram_id, days):
     
     try:
         add_resp = session.post(f"{XUI_URL}panel/api/inbounds/addClient", json=add_payload, timeout=10)
+        result.append(f"📤 Создание клиента: HTTP {add_resp.status_code}")
+        
         if add_resp.status_code != 200:
-            print(f"HTTP error: {add_resp.status_code}")
-            return None
+            return "\n".join(result) + f"\n\n❌ Ошибка HTTP: {add_resp.status_code}"
         
         add_json = add_resp.json()
         if not add_json.get("success"):
-            print(f"API error: {add_json.get('msg')}")
-            return None
+            return "\n".join(result) + f"\n\n❌ Ошибка API: {add_json.get('msg', 'неизвестная')}"
         
-        # Пытаемся получить ссылку из ответа
         client_url = add_json.get("obj", {}).get("url")
         if client_url:
+            result.append("✅ Ключ получен!")
             return client_url
-        
-        # Если ссылки нет — пробуем найти клиента в списке (подстраховка)
-        inbounds_resp = session.get(f"{XUI_URL}panel/api/inbounds/get/{inbound_id}", timeout=10)
-        if inbounds_resp.status_code == 200:
-            clients = inbounds_resp.json().get("obj", {}).get("settings", {}).get("clients", [])
-            for client in clients:
-                if client.get("email") == email:
-                    return client.get("url")
-        
-        return None
+        else:
+            return "\n".join(result) + f"\n\n❌ Ключ создан, но ссылка не найдена.\nОтвет: {add_json}"
+            
     except Exception as e:
-        print(f"Add client error: {e}")
-        return None
+        return "\n".join(result) + f"\n\n❌ Ошибка запроса: {type(e).__name__} {e}"
 
-# ===== 3. КЛАВИАТУРЫ (БЕЗ ИЗМЕНЕНИЙ) =====
+# ===== 3. КЛАВИАТУРЫ =====
 def main_menu():
     keyboard = InlineKeyboardMarkup(row_width=2)
     keyboard.add(
@@ -230,9 +246,7 @@ def callback_handler(call):
             bot.edit_message_text(text, chat_id, msg_id, parse_mode="Markdown", reply_markup=back_button())
         else:
             bot.edit_message_text(
-                f"❌ *Ошибка создания ключа*\n\n"
-                f"Пожалуйста, напишите администратору: @твой_ник\n"
-                f"Сообщите это: {vpn_key if vpn_key else 'API не ответил'}",
+                f"❌ *Ошибка создания ключа*\n\n```\n{vpn_key}\n```\n\nПожалуйста, напишите администратору.",
                 chat_id, msg_id, parse_mode="Markdown",
                 reply_markup=back_button()
             )
@@ -247,7 +261,7 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b'Bot is running')
     
     def log_message(self, format, *args):
-        pass  # заглушаем лишние логи
+        pass
 
 def run_http_server():
     port = int(os.environ.get("PORT", 8080))
@@ -257,5 +271,5 @@ def run_http_server():
 Thread(target=run_http_server, daemon=True).start()
 
 # ===== 6. ЗАПУСК =====
-print("✅ Бот запущен. Автоматический поиск Inbound и выдача ключей активна.")
+print("✅ Бот запущен. Диагностика включена.")
 bot.infinity_polling()
