@@ -11,9 +11,9 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 TOKEN = os.environ.get("BOT_TOKEN")
-XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"  # Без /panel/settings
-XUI_USERNAME = os.environ.get("XUI_USERNAME")
-XUI_PASSWORD = os.environ.get("XUI_PASSWORD")
+XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"
+XUI_USERNAME = "VPn/Admin.log"
+XUI_PASSWORD = "Vpn/AdMin.pas"
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -57,7 +57,6 @@ def create_vpn_key(days):
         return resp.json().get("obj", {}).get("url")
     return None
 
-# ======= КЛАВИАТУРЫ =======
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -80,9 +79,8 @@ def callback(call):
     if key and key.startswith("vless://"):
         bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     else:
-        bot.edit_message_text("❌ *Ошибка создания ключа.* Попробуй позже.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("❌ *Ошибка.* Напиши админу.", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# ======= HTTP-СЕРВЕР ДЛЯ RENDER =======
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
