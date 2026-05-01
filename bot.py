@@ -10,8 +10,8 @@ from client3x import Client3XUI, ClientPayload
 # ----- ТВОИ НАСТРОЙКИ (ВСТАВЬ СВОИ ДАННЫЕ) -----
 TOKEN = os.environ.get("BOT_TOKEN")
 PANEL_URL = "http://72.56.119.147:54321/mKZdh18YN6yXlsRTkR/"  # Твой URL панели
-PANEL_USERNAME = "admin"
-PANEL_PASSWORD = "admin"
+PANEL_USERNAME = "VPn/Admin.log"
+PANEL_PASSWORD = "Vpn/AdMin.pas"
 INBOUND_ID = 1  # ID твоего VLESS подключения (скорее всего 1)
 # ------------------------------------------------
 
