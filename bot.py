@@ -23,13 +23,16 @@ def get_inbound_id():
     session.verify = False
     resp = session.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD})
     if resp.status_code != 200 or not resp.json().get("success"):
+        print("Login failed")
         return None
     inbounds_resp = session.get(f"{XUI_URL}/panel/api/inbounds/list")
     if inbounds_resp.status_code != 200:
+        print("Failed to get inbounds")
         return None
     for inbound in inbounds_resp.json().get("obj", []):
         if inbound.get("protocol") == "vless":
             return inbound.get("id")
+    print("No VLESS inbound found")
     return None
 
 def create_vpn_key(days):
@@ -84,14 +87,14 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     days = int(call.data)
-    bot.edit_message_text(f"⏳ *Создаём ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text(f"⏳ *Создаю ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     key = create_vpn_key(days)
     if key and key.startswith("vless://"):
         bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     else:
         bot.edit_message_text(f"❌ {key}", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# ========== HTTP-сервер для Render ==========
+# HTTP-сервер для Render
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -107,5 +110,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. Автовыдача активна")
+print("✅ Бот запущен. Автовыдача ключей активна.")
 bot.infinity_polling()
