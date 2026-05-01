@@ -8,72 +8,92 @@ from datetime import datetime, timedelta
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ========== ТВОИ ДАННЫЕ ==========
 TOKEN = "8703864624:AAGzkhvrv93U6k0a-6FNMz_ieeL8SQXQiVk"
-XUI_URL = "http://72.56.119.147:8443/L7nSikoltRgG5CM2GC"   # ← ТУТ HTTP, НЕ HTTPS
+XUI_URL = "http://72.56.119.147:8443/L7nSikoltRgG5CM2GC"
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
-PUBLIC_KEY = "GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE"
 
 bot = telebot.TeleBot(TOKEN)
 
-def get_inbound_info():
-    try:
-        sess = requests.Session()
-        login_resp = sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
-        if login_resp.status_code != 200 or not login_resp.json().get("success"):
-            print("Login failed")
-            return None, None
-        resp = sess.get(f"{XUI_URL}/panel/api/inbounds/list", timeout=10)
-        if resp.status_code != 200:
-            print(f"Failed to get inbounds: {resp.status_code}")
-            return None, None
-        data = resp.json()
-        for inbound in data.get("obj", []):
-            if inbound.get("protocol", "").lower() == "vless":
-                return inbound.get("id"), inbound.get("port")
-        return None, None
-    except Exception as e:
-        print(f"get_inbound_info error: {e}")
-        return None, None
-
 def create_vpn_key(days):
-    inbound_id, port = get_inbound_info()
-    if not inbound_id:
-        return "❌ Ошибка: VLESS Inbound не найден."
-
-    sess = requests.Session()
-    sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
-    expiry = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
+    session = requests.Session()
+    
+    # 1. Логинимся и получаем куки
+    try:
+        login_resp = session.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
+        if login_resp.status_code != 200 or not login_resp.json().get("success"):
+            return "❌ Ошибка авторизации в панели"
+    except Exception as e:
+        return f"❌ Ошибка подключения: {e}"
+    
+    # 2. Получаем список Inbound и находим VLESS
+    try:
+        inbounds_resp = session.get(f"{XUI_URL}/panel/api/inbounds/list", timeout=10)
+        if inbounds_resp.status_code != 200:
+            return f"❌ Ошибка получения списка: {inbounds_resp.status_code}"
+        
+        inbounds = inbounds_resp.json().get("obj", [])
+        inbound_id = None
+        inbound_port = None
+        for inbound in inbounds:
+            if inbound.get("protocol") == "vless":
+                inbound_id = inbound.get("id")
+                inbound_port = inbound.get("port")
+                break
+        
+        if not inbound_id:
+            return "❌ VLESS Inbound не найден. Создайте его в панели (порт 8443, протокол VLESS)"
+    except Exception as e:
+        return f"❌ Ошибка получения Inbound: {e}"
+    
+    # 3. Создаём клиента
+    expiry_time = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
     client_id = str(uuid.uuid4())
     email = f"user_{int(time.time())}"
+    
     payload = {
         "id": inbound_id,
         "settings": json.dumps({
             "clients": [{
                 "id": client_id,
                 "email": email,
-                "expiryTime": expiry,
+                "expiryTime": expiry_time,
                 "totalGB": 0,
                 "enable": True
             }]
         })
     }
+    
     try:
-        resp = sess.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload, timeout=30)
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("success"):
-                host = XUI_URL.split("//")[1].split("/")[0].split(":")[0]
-                return f"vless://{client_id}@{host}:{port}?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={PUBLIC_KEY}&type=tcp&headerType=none#{email}"
-            else:
-                return f"❌ Ошибка: {data.get('msg')}"
-        else:
-            return f"❌ HTTP {resp.status_code}"
+        add_resp = session.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload, timeout=30)
+        if add_resp.status_code != 200:
+            return f"❌ HTTP ошибка: {add_resp.status_code}"
+        
+        result = add_resp.json()
+        if not result.get("success"):
+            return f"❌ Ошибка API: {result.get('msg')}"
+        
+        # Пробуем получить URL из ответа
+        client_url = result.get("obj", {}).get("url")
+        if client_url:
+            # Убеждаемся, что порт правильный
+            if f":{inbound_port}" not in client_url.split("?")[0]:
+                # Если порт в URL не совпадает с реальным — подменяем
+                client_url = client_url.replace(":443", f":{inbound_port}")
+            return client_url
+        
+        # Если URL нет — собираем вручную (но такого быть не должно)
+        host = XUI_URL.split("//")[1].split("/")[0].split(":")[0]
+        return f"vless://{client_id}@{host}:{inbound_port}?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk=GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE&type=tcp&headerType=none#{email}"
+    
     except Exception as e:
-        return f"❌ Ошибка: {str(e)}"
+        return f"❌ Ошибка создания: {e}"
 
+# ========== КЛАВИАТУРЫ ==========
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -114,5 +134,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. HTTP режим.")
+print("✅ Бот запущен. Автовыдача ключей активна.")
 bot.infinity_polling()
