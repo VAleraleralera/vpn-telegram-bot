@@ -64,8 +64,8 @@ def create_vpn_key(days):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                # Получаем чистый IP без порта
-                host = XUI_URL.split("//")[1].split(":")[0]
+                # Получаем чистый IP (без порта)
+                host = XUI_URL.split("//")[1].split("/")[0].split(":")[0]
                 vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk=GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE&type=tcp&headerType=none#{email}"
                 return vless_link
             else:
