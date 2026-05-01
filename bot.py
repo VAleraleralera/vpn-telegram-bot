@@ -11,49 +11,43 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ========== ТВОИ ДАННЫЕ ==========
 TOKEN = "8703864624:AAGzkhvrv93U6k0a-6FNMz_ieeL8SQXQiVk"
-XUI_URL = "https://72.56.119.147:8443/L7nSikoltRgG5CM2GC"
+XUI_URL = "http://72.56.119.147:8443/L7nSikoltRgG5CM2GC"   # ← ТУТ HTTP, НЕ HTTPS
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
 PUBLIC_KEY = "GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE"
 
 bot = telebot.TeleBot(TOKEN)
 
-# ========== ПОЛУЧАЕМ ID И ПОРТ VLESS INBOUND ==========
 def get_inbound_info():
     try:
         sess = requests.Session()
-        sess.verify = False
-        login = sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
-        if login.status_code != 200 or not login.json().get("success"):
+        login_resp = sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
+        if login_resp.status_code != 200 or not login_resp.json().get("success"):
+            print("Login failed")
             return None, None
         resp = sess.get(f"{XUI_URL}/panel/api/inbounds/list", timeout=10)
         if resp.status_code != 200:
+            print(f"Failed to get inbounds: {resp.status_code}")
             return None, None
-        for inbound in resp.json().get("obj", []):
-            if inbound.get("protocol") == "vless":
-                inbound_id = inbound.get("id")
-                port = inbound.get("port")
-                print(f"Найден Inbound ID: {inbound_id}, порт: {port}")
-                return inbound_id, port
+        data = resp.json()
+        for inbound in data.get("obj", []):
+            if inbound.get("protocol", "").lower() == "vless":
+                return inbound.get("id"), inbound.get("port")
         return None, None
     except Exception as e:
-        print(f"Ошибка get_inbound_info: {e}")
+        print(f"get_inbound_info error: {e}")
         return None, None
 
-# ========== СОЗДАНИЕ КЛЮЧА С АВТОМАТИЧЕСКИМ ПОРТОМ ==========
 def create_vpn_key(days):
     inbound_id, port = get_inbound_info()
     if not inbound_id:
-        return "❌ Ошибка: VLESS Inbound не найден. Создайте его в панели."
+        return "❌ Ошибка: VLESS Inbound не найден."
 
     sess = requests.Session()
-    sess.verify = False
     sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
-
     expiry = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
     client_id = str(uuid.uuid4())
     email = f"user_{int(time.time())}"
-
     payload = {
         "id": inbound_id,
         "settings": json.dumps({
@@ -66,24 +60,20 @@ def create_vpn_key(days):
             }]
         })
     }
-
     try:
         resp = sess.post(f"{XUI_URL}/panel/api/inbounds/addClient", json=payload, timeout=30)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                # Получаем хост из XUI_URL (без порта)
                 host = XUI_URL.split("//")[1].split("/")[0].split(":")[0]
-                vless_link = f"vless://{client_id}@{host}:{port}?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={PUBLIC_KEY}&type=tcp&headerType=none#{email}"
-                return vless_link
+                return f"vless://{client_id}@{host}:{port}?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={PUBLIC_KEY}&type=tcp&headerType=none#{email}"
             else:
-                return f"❌ Ошибка API: {data.get('msg')}"
+                return f"❌ Ошибка: {data.get('msg')}"
         else:
-            return f"❌ HTTP ошибка {resp.status_code}"
+            return f"❌ HTTP {resp.status_code}"
     except Exception as e:
-        return f"❌ Исключение: {str(e)}"
+        return f"❌ Ошибка: {str(e)}"
 
-# ========== КНОПКИ ==========
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -124,5 +114,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. Автоматическое определение порта активно.")
+print("✅ Бот запущен. HTTP режим.")
 bot.infinity_polling()
