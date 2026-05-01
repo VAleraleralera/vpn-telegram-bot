@@ -9,8 +9,8 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# === ТВОИ НАСТРОЙКИ ===
-TOKEN = "8703864624:AAGzkhvrv93U6k0a-6FNMz_ieeL8SQXQiVk"
+# === НАСТРОЙКИ ===
+TOKEN = "8170833077:AAHBUGI755l6UNOKVBooNLhMh-uG1iXEmEo"
 XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
@@ -30,9 +30,9 @@ def get_inbound_id():
         for inbound in resp.json().get("obj", []):
             if inbound.get("protocol") == "vless":
                 return inbound.get("id")
-        return None
     except:
-        return None
+        pass
+    return None
 
 def create_vpn_key(days):
     inbound_id = get_inbound_id()
@@ -64,21 +64,9 @@ def create_vpn_key(days):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                # Получаем публичный ключ из Inbound
-                public_key = ""
-                try:
-                    inb_resp = sess.get(f"{XUI_URL}/panel/api/inbounds/get/{inbound_id}", timeout=10)
-                    if inb_resp.status_code == 200:
-                        inb_data = inb_resp.json().get("obj", {})
-                        stream = json.loads(inb_data.get("streamSettings", "{}"))
-                        public_key = stream.get("realitySettings", {}).get("publicKey", "")
-                except:
-                    pass
-                if not public_key:
-                    public_key = "GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE"
-                # Собираем ссылку вручную
-                host = XUI_URL.split("//")[1].split("/")[0]
-                vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={public_key}&type=tcp&headerType=none#{email}"
+                # Получаем чистый IP без порта
+                host = XUI_URL.split("//")[1].split(":")[0]
+                vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk=GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE&type=tcp&headerType=none#{email}"
                 return vless_link
             else:
                 return f"❌ Ошибка API: {data.get('msg')}"
@@ -111,7 +99,6 @@ def callback(call):
     else:
         bot.edit_message_text(key, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
-# === ВЕБ-СЕРВЕР ДЛЯ RENDER ===
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
