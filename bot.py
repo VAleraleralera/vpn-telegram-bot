@@ -9,14 +9,16 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 from threading import Thread
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
-# === НАСТРОЙКИ ===
-TOKEN = "8170833077:AAHBUGI755l6UNOKVBooNLhMh-uG1iXEmEo"
+# ========== ТВОИ ДАННЫЕ ==========
+TOKEN = "8703864624:AAGzkhvrv93U6k0a-6FNMz_ieeL8SQXQiVk"
 XUI_URL = "https://72.56.119.147:54321/L7nSikoltRgG5CM2GC"
 XUI_USERNAME = "VPn/Admin.log"
 XUI_PASSWORD = "Vpn/AdMin.pas"
+PUBLIC_KEY = "GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE"
 
 bot = telebot.TeleBot(TOKEN)
 
+# ========== ПОЛУЧАЕМ ID VLESS INBOUND ==========
 def get_inbound_id():
     try:
         sess = requests.Session()
@@ -30,10 +32,11 @@ def get_inbound_id():
         for inbound in resp.json().get("obj", []):
             if inbound.get("protocol") == "vless":
                 return inbound.get("id")
-    except:
-        pass
+    except Exception as e:
+        print(f"get_inbound_id error: {e}")
     return None
 
+# ========== СОЗДАНИЕ УНИКАЛЬНОГО КЛЮЧА ==========
 def create_vpn_key(days):
     inbound_id = get_inbound_id()
     if not inbound_id:
@@ -42,6 +45,7 @@ def create_vpn_key(days):
     sess = requests.Session()
     sess.verify = False
     sess.post(f"{XUI_URL}/login", json={"username": XUI_USERNAME, "password": XUI_PASSWORD}, timeout=10)
+
     expiry = int((datetime.now() + timedelta(days=days)).timestamp() * 1000)
     client_id = str(uuid.uuid4())
     email = f"user_{int(time.time())}"
@@ -64,9 +68,9 @@ def create_vpn_key(days):
         if resp.status_code == 200:
             data = resp.json()
             if data.get("success"):
-                # Получаем чистый IP (без порта)
+                # Чистый IP без порта
                 host = XUI_URL.split("//")[1].split("/")[0].split(":")[0]
-                vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk=GEZbGybRfgK1eKGyZqBdnZEoVmsqQ0o6LSEItu6WQVE&type=tcp&headerType=none#{email}"
+                vless_link = f"vless://{client_id}@{host}:443?flow=xtls-rprx-vision&encryption=none&security=reality&sni=www.google.com&fp=chrome&pbk={PUBLIC_KEY}&type=tcp&headerType=none#{email}"
                 return vless_link
             else:
                 return f"❌ Ошибка API: {data.get('msg')}"
@@ -75,6 +79,7 @@ def create_vpn_key(days):
     except Exception as e:
         return f"❌ Исключение: {str(e)}"
 
+# ========== КНОПКИ ==========
 def tariff_menu():
     kb = InlineKeyboardMarkup(row_width=1)
     kb.add(
@@ -92,13 +97,14 @@ def start(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback(call):
     days = int(call.data)
-    bot.edit_message_text(f"⏳ *Создаю ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text(f"⏳ *Создаю уникальный ключ на {days} дней...*", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     key = create_vpn_key(days)
     if key.startswith("vless://"):
-        bot.edit_message_text(f"✅ *Ваш ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text(f"✅ *Твой ключ:*\n`{key}`", call.message.chat.id, call.message.message_id, parse_mode="Markdown")
     else:
         bot.edit_message_text(key, call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
+# ========== ВЕБ-СЕРВЕР ДЛЯ RENDER ==========
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -114,5 +120,5 @@ def run_http_server():
 
 Thread(target=run_http_server, daemon=True).start()
 
-print("✅ Бот запущен. Автовыдача активна.")
+print("✅ Бот запущен. Автоматическая генерация ключей активна.")
 bot.infinity_polling()
